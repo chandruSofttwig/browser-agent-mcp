@@ -42,7 +42,7 @@ export const config = {
   workspaceRoot: env('WORKSPACE_ROOT', join(homedir(), 'Documents', 'GitHub'))!,
   authToken: loadToken(),
   allowedHosts: loadAllowedHosts(),
-  bashTimeoutMs: Number.parseInt(env('BASH_TIMEOUT_MS', '60000')!, 10),
+  bashTimeoutMs: Number.parseInt(env('BASH_TIMEOUT_MS', '30000')!, 10),
   /** Public HTTPS origin+path for OAuth AS endpoints (must be under Funnel /agent). */
   publicBaseUrl: env('PUBLIC_BASE_URL', defaultPublicBase)!,
   /** Public MCP resource URL ChatGPT/Claude connect to. */

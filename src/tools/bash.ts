@@ -3,14 +3,22 @@ import { z } from 'zod/v4'
 import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js'
 import { trackToolCall } from '../activity-bus.js'
 import { config } from '../config.js'
+import { STDERR_CAP, STDOUT_CAP, truncateOutput } from '../limits.js'
 import { assertCwdInWorkspace, getWorkspaceRoot, toWorkspaceRelative } from '../paths.js'
+
+function shellCommand(command: string): { exe: string; args: string[] } {
+  if (process.platform === 'win32') {
+    return { exe: 'cmd.exe', args: ['/d', '/s', '/c', command] }
+  }
+  return { exe: '/bin/bash', args: ['-lc', command] }
+}
 
 export function registerBashTool(server: McpServer): void {
   server.registerTool(
     'Bash',
     {
       description:
-        'Run a shell command with cwd jailed under the workspace root. Hard timeout applies. Do not use for interactive programs.',
+        'Run a shell command jailed under the workspace. Prefer Glob/Grep/Read/Edit for file work — Bash is slower and heavier. Output and timeout are capped.',
       annotations: {
         readOnlyHint: false,
         openWorldHint: false,
@@ -26,9 +34,9 @@ export function registerBashTool(server: McpServer): void {
           .number()
           .int()
           .min(1000)
-          .max(300_000)
+          .max(120_000)
           .optional()
-          .describe('Timeout in ms (default from BASH_TIMEOUT_MS)'),
+          .describe('Timeout in ms (default from BASH_TIMEOUT_MS, typically 30s)'),
       },
     },
     async ({ command, cwd, timeout_ms }) =>
@@ -42,24 +50,27 @@ export function registerBashTool(server: McpServer): void {
         async () => {
           try {
             const workdir = assertCwdInWorkspace(cwd)
-            const timeout = timeout_ms ?? config.bashTimeoutMs
+            const timeout = Math.min(timeout_ms ?? config.bashTimeoutMs, 120_000)
+            const { exe, args } = shellCommand(command)
             const result = await new Promise<{
               code: number | null
               stdout: string
               stderr: string
               timedOut: boolean
             }>((resolve) => {
-              const child = spawn('/bin/bash', ['-lc', command], {
+              const child = spawn(exe, args, {
                 cwd: workdir,
                 env: {
                   PATH: process.env.PATH,
                   HOME: process.env.HOME,
+                  USERPROFILE: process.env.USERPROFILE,
                   USER: process.env.USER,
                   LANG: process.env.LANG ?? 'C.UTF-8',
                   TERM: 'dumb',
                   BROWSER_AGENT_MCP_WORKSPACE: getWorkspaceRoot(),
                 },
                 stdio: ['ignore', 'pipe', 'pipe'],
+                windowsHide: true,
               })
               let stdout = ''
               let stderr = ''
@@ -69,10 +80,10 @@ export function registerBashTool(server: McpServer): void {
                 child.kill('SIGKILL')
               }, timeout)
               child.stdout.on('data', (chunk: Buffer) => {
-                if (stdout.length < 200_000) stdout += chunk.toString('utf8')
+                if (stdout.length < STDOUT_CAP) stdout += chunk.toString('utf8')
               })
               child.stderr.on('data', (chunk: Buffer) => {
-                if (stderr.length < 50_000) stderr += chunk.toString('utf8')
+                if (stderr.length < STDERR_CAP) stderr += chunk.toString('utf8')
               })
               child.on('close', (code) => {
                 clearTimeout(timer)
@@ -88,8 +99,12 @@ export function registerBashTool(server: McpServer): void {
               `cwd: ${toWorkspaceRelative(workdir)}`,
               `exit: ${result.timedOut ? 'timeout' : result.code}`,
             ]
-            if (result.stdout) parts.push(`stdout:\n${result.stdout}`)
-            if (result.stderr) parts.push(`stderr:\n${result.stderr}`)
+            if (result.stdout) {
+              parts.push(`stdout:\n${truncateOutput(result.stdout, STDOUT_CAP, 'stdout')}`)
+            }
+            if (result.stderr) {
+              parts.push(`stderr:\n${truncateOutput(result.stderr, STDERR_CAP, 'stderr')}`)
+            }
             if (result.timedOut) {
               parts.push(`Command killed after ${timeout}ms`)
             }

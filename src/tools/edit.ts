@@ -9,7 +9,7 @@ export function registerEditTool(server: McpServer): void {
     'Edit',
     {
       description:
-        'Exact string replacement in a file under the workspace. Fails if old_string is missing or not unique (unless replace_all).',
+        'Exact string replacement in a file under the workspace. Prefer Edit over Bash for code changes.',
       annotations: {
         readOnlyHint: false,
         openWorldHint: false,

@@ -4,6 +4,16 @@ import { join } from 'node:path'
 import { z } from 'zod/v4'
 import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js'
 import { trackToolCall } from '../activity-bus.js'
+import {
+  GREP_DEFAULT_MAX,
+  GREP_HARD_MAX,
+  GREP_MAX_FILE_BYTES,
+  STDERR_CAP,
+  STDOUT_CAP,
+  rgExcludeGlobs,
+  shouldSkipDirName,
+  truncateOutput,
+} from '../limits.js'
 import { getWorkspaceRoot, resolveInWorkspace, toWorkspaceRelative } from '../paths.js'
 
 function run(
@@ -29,10 +39,10 @@ function run(
       child.kill('SIGKILL')
     }, timeoutMs)
     child.stdout.on('data', (chunk: Buffer) => {
-      if (stdout.length < 200_000) stdout += chunk.toString('utf8')
+      if (stdout.length < STDOUT_CAP) stdout += chunk.toString('utf8')
     })
     child.stderr.on('data', (chunk: Buffer) => {
-      if (stderr.length < 50_000) stderr += chunk.toString('utf8')
+      if (stderr.length < STDERR_CAP) stderr += chunk.toString('utf8')
     })
     child.on('close', (code) => {
       clearTimeout(timer)
@@ -62,7 +72,6 @@ async function nodeSearch(options: {
   }
 
   const matches: string[] = []
-  const skip = new Set(['node_modules', '.git', 'dist', 'coverage', '.next'])
 
   async function walk(dir: string): Promise<void> {
     if (matches.length >= options.limit) return
@@ -74,7 +83,7 @@ async function nodeSearch(options: {
     }
     for (const entry of entries) {
       if (matches.length >= options.limit) return
-      if (skip.has(entry.name)) continue
+      if (shouldSkipDirName(entry.name)) continue
       const full = join(dir, entry.name)
       if (entry.isDirectory()) {
         await walk(full)
@@ -82,14 +91,13 @@ async function nodeSearch(options: {
       }
       if (!entry.isFile()) continue
       if (options.globFilter) {
-        // very small glob: *.ext
         const gf = options.globFilter
         if (gf.startsWith('*.') && !entry.name.endsWith(gf.slice(1))) continue
       }
       let text: string
       try {
         const st = await stat(full)
-        if (st.size > 1_000_000) continue
+        if (st.size > GREP_MAX_FILE_BYTES) continue
         text = await readFile(full, 'utf8')
       } catch {
         continue
@@ -113,7 +121,7 @@ export function registerGrepTool(server: McpServer): void {
     'Grep',
     {
       description:
-        'Search file contents under the workspace with ripgrep when available, otherwise a built-in recursive search.',
+        'Search file contents under the workspace. Prefer a subdirectory via path and a file glob. Prefer this over Bash. Results are capped for speed.',
       annotations: {
         readOnlyHint: true,
         openWorldHint: false,
@@ -124,7 +132,7 @@ export function registerGrepTool(server: McpServer): void {
         path: z
           .string()
           .optional()
-          .describe('File or directory to search (relative to workspace)'),
+          .describe('File or directory to search (prefer a subdirectory)'),
         glob: z
           .string()
           .optional()
@@ -134,9 +142,9 @@ export function registerGrepTool(server: McpServer): void {
           .number()
           .int()
           .min(1)
-          .max(200)
+          .max(GREP_HARD_MAX)
           .optional()
-          .describe('Max matching lines (default 50)'),
+          .describe(`Max matching lines (default ${GREP_DEFAULT_MAX}, max ${GREP_HARD_MAX})`),
       },
     },
     async ({ pattern, path, glob, case_insensitive, max_results }) =>
@@ -153,13 +161,24 @@ export function registerGrepTool(server: McpServer): void {
             const target = path
               ? resolveInWorkspace(path, { mustExist: true })
               : cwd
-            const limit = max_results ?? 50
-            const args = ['-n', '--no-heading', '--color', 'never', '-m', String(limit)]
+            const limit = Math.min(max_results ?? GREP_DEFAULT_MAX, GREP_HARD_MAX)
+            const args = [
+              '-n',
+              '--no-heading',
+              '--color',
+              'never',
+              '-m',
+              String(limit),
+              '--hidden',
+            ]
+            for (const g of rgExcludeGlobs()) {
+              args.push('--glob', g)
+            }
             if (case_insensitive) args.push('-i')
             if (glob) args.push('--glob', glob)
             args.push('--', pattern, target)
 
-            const result = await run('rg', args, cwd, 30_000)
+            const result = await run('rg', args, cwd, 20_000)
             if (
               result.missing ||
               result.code === 127 ||
@@ -172,13 +191,25 @@ export function registerGrepTool(server: McpServer): void {
                 globFilter: glob,
                 limit,
               })
-              return { content: [{ type: 'text' as const, text }] }
+              return {
+                content: [
+                  {
+                    type: 'text' as const,
+                    text: truncateOutput(text, STDOUT_CAP, 'grep'),
+                  },
+                ],
+              }
             }
             const text =
               result.stdout.trim() ||
               (result.code === 1 ? 'No matches.' : result.stderr.trim() || 'No output.')
             return {
-              content: [{ type: 'text' as const, text }],
+              content: [
+                {
+                  type: 'text' as const,
+                  text: truncateOutput(text, STDOUT_CAP, 'grep'),
+                },
+              ],
             }
           } catch (error) {
             return {

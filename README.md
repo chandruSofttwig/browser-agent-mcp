@@ -326,7 +326,14 @@ systemctl --user restart browser-agent-mcp
 | `PUBLIC_BASE_URL` | `https://…ts.net/agent` | OAuth issuer / endpoint prefix |
 | `PUBLIC_MCP_URL` | `https://…ts.net/agent/mcp` | MCP resource URL |
 | `ALLOWED_HOSTS` | localhost + Tailscale MagicDNS name | Host header allowlist |
-| `BASH_TIMEOUT_MS` | `60000` | Bash tool timeout |
+| `BASH_TIMEOUT_MS` | `30000` | Bash tool timeout |
+
+### Speed defaults (built-in)
+
+- Glob max **100** paths; skips `node_modules`, `.git`, `dist`, caches, etc.
+- Grep default **30** hits (max 100); skips heavy dirs; smaller file size cap
+- Read default **250** lines (max 800) unless you pass `limit`
+- Bash stdout/stderr truncated; default timeout **30s**; prefer Glob/Grep/Read/Edit
 
 Update `ALLOWED_HOSTS` and `PUBLIC_*` URLs if your Tailscale MagicDNS name changes, then restart the service.
 
