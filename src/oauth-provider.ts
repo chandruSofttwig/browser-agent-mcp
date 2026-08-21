@@ -99,7 +99,7 @@ function consentHtml(query: Record<string, string>): string {
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>Authorize Browser Agent MCP</title>
+  <title>Authorize Andro Agent</title>
   <style>
     body { font-family: system-ui, sans-serif; background:#faf7f2; color:#2a1f18; margin:0; min-height:100vh; display:grid; place-items:center; }
     form { background:#fffdf9; border:1px solid #e8dcc8; padding:2rem; width:min(420px,92vw); border-radius:12px; }
@@ -112,7 +112,7 @@ function consentHtml(query: Record<string, string>): string {
 <body>
   <form method="POST">
     <h1>Authorize ChatGPT / Claude</h1>
-    <p>Paste your Browser Agent MCP token to allow this client to use your laptop tools.</p>
+    <p>Paste your Andro Agent token to allow this client to use your laptop tools.</p>
     ${fields}
     <label>MCP token<br/><input type="password" name="password" required autocomplete="current-password" /></label>
     <button type="submit">Authorize</button>

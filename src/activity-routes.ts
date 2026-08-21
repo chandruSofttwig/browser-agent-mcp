@@ -26,7 +26,9 @@ function requireActivityAuth(req: Request, res: Response, next: NextFunction): v
 
 function uiDistPath(): string {
   const here = dirname(fileURLToPath(import.meta.url))
-  // dist/activity-routes.js → ../ui/dist
+  // Packaged layout: dist/ui (copied at build). Dev/repo: ../ui/dist.
+  const bundled = join(here, 'ui')
+  if (existsSync(join(bundled, 'index.html'))) return bundled
   return join(here, '..', 'ui', 'dist')
 }
 
@@ -76,7 +78,7 @@ export function mountActivityRoutes(app: Express): void {
 
   const dist = uiDistPath()
   if (!existsSync(dist)) {
-    console.warn(`[browser-agent-mcp] activity UI not built (missing ${dist})`)
+    console.warn(`[andro-agent] activity UI not built (missing ${dist})`)
     for (const prefix of prefixes) {
       app.get(prefix, (_req, res) => {
         res

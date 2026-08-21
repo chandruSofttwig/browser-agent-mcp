@@ -1,18 +1,24 @@
 {
   "name": "browser-agent-mcp",
   "version": "1.0.0",
-  "description": "OpenClaude-like coding tools over Streamable HTTP MCP for browser ChatGPT/Claude via Tailscale Funnel",
+  "description": "Andro Agent — local coding tools over Streamable HTTP MCP for ChatGPT/Claude via Tailscale Funnel",
   "type": "module",
   "bin": {
-    "browser-agent-mcp": "./dist/index.js"
+    "andro-agent": "./dist/cli.js",
+    "browser-agent-mcp": "./dist/cli.js"
   },
+  "files": [
+    "dist",
+    "README.md"
+  ],
   "scripts": {
-    "build": "npm run build:ui && tsc",
+    "build": "npm run build:ui && tsc && node scripts/copy-ui.mjs && node scripts/chmod-cli.mjs",
     "build:ui": "npm --prefix ui run build",
-    "build:server": "tsc",
-    "start": "node dist/index.js",
-    "dev": "tsx src/index.ts",
-    "typecheck": "tsc --noEmit"
+    "build:server": "tsc && node scripts/copy-ui.mjs && node scripts/chmod-cli.mjs",
+    "start": "node dist/cli.js start",
+    "dev": "tsx src/cli.ts",
+    "typecheck": "tsc --noEmit",
+    "prepublishOnly": "npm run build"
   },
   "engines": {
     "node": ">=22"
