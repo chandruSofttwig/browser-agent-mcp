@@ -107,6 +107,21 @@ export const config = {
   sandboxMode: (env('SANDBOX_MODE', 'auto')!.toLowerCase() === 'off' ? 'off' : 'auto') as
     | 'auto'
     | 'off',
+  /**
+   * Require explicit human approval before Bash/Write/Edit run.
+   * Defaults on: these tools are driven by a remote model, and the sandbox
+   * bounds the blast radius but does not make silent edits acceptable.
+   */
+  approvalsEnabled: env('REQUIRE_APPROVAL', '1') !== '0',
+  /** How long a pending approval waits before it is denied. */
+  approvalTimeoutMs: Number.parseInt(env('APPROVAL_TIMEOUT_MS', '120000')!, 10),
+  /**
+   * Local Andromedia core API, for the context tools (andro_search /
+   * andro_investigate / andro_list_sources). These are read-only.
+   */
+  androBaseUrl: env('ANDRO_BASE_URL', 'http://localhost:8083')!,
+  /** Default Andromedia service/workspace name. */
+  androService: env('ANDRO_SERVICE', 'local')!,
   /** Public HTTPS origin+path for OAuth AS endpoints (must be under Funnel /agent). */
   publicBaseUrl: env('PUBLIC_BASE_URL', defaultPublicBase)!,
   /** Public MCP resource URL ChatGPT/Claude connect to. */

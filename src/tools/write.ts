@@ -5,6 +5,7 @@ import { z } from 'zod/v4'
 import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js'
 import { trackToolCall } from '../activity-bus.js'
 import { resolveInWorkspace, toWorkspaceRelative } from '../paths.js'
+import { approvalGate } from '../tool-approval.js'
 
 export function registerWriteTool(server: McpServer): void {
   server.registerTool(
@@ -32,6 +33,12 @@ export function registerWriteTool(server: McpServer): void {
             argsSummary: `${path} (${content.length} bytes)`,
             paths: [path],
             args: activityArgs,
+            beforeRun: approvalGate({
+              tool: 'Write',
+              summary: `Write ${content.length} bytes to ${path}`,
+              paths: [path],
+              args: activityArgs,
+            }),
           },
         async () => {
           try {

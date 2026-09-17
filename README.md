@@ -67,16 +67,63 @@ The CLI also loads that env file itself on `start`.
 
 ## Tools
 
+### Local files and shell
+
+| Tool | Purpose | Approval |
+|------|---------|----------|
+| `Read` | Read a file under the workspace | — |
+| `Glob` | Find files by glob pattern | — |
+| `Grep` | Search contents with ripgrep | — |
+| `Write` | Create/overwrite a file | **required** |
+| `Edit` | Exact string replace in a file | **required** |
+| `Bash` | Run a shell command confined to the workspace | **required** |
+
+### Indexed team context
+
+Served from your own local Andromedia core, so one MCP client gets both the code
+and the reasons behind it — `Grep` finds the call site, `andro_investigate`
+explains why it changed (the ticket, the thread, the commit).
+
 | Tool | Purpose |
 |------|---------|
-| `Read` | Read a file under the workspace |
-| `Write` | Create/overwrite a file |
-| `Edit` | Exact string replace in a file |
-| `Glob` | Find files by glob pattern |
-| `Grep` | Search contents with ripgrep |
-| `Bash` | Run a shell command confined to the workspace |
+| `andro_investigate` | Grounded answer over indexed Slack / Notion / Jira / Linear / git / CRM |
+| `andro_search` | Hybrid search across the indexed corpus |
+| `andro_list_sources` | What is indexed, how much, and when it last synced |
+
+Read-only, so not approval-gated. Requires the core API (`ANDRO_BASE_URL`,
+default `http://localhost:8083`) and `ANDRO_SERVICE` (default `local`).
+
+> **Why not one server?** The hosted Andromedia MCP runs in a container with no
+> filesystem access — deliberately. These context tools therefore run from the
+> *local* agent over plain HTTP, which keeps the remote surface read-only while
+> still putting file access and context access in front of the same model.
 
 Default workspace root: `~/Documents/GitHub` (`WORKSPACE_ROOT`).
+
+---
+
+## Approvals
+
+`Write`, `Edit` and `Bash` change files and are driven by a remote model, so
+each call pauses for an explicit human decision.
+
+```bash
+andro-agent approvals                                  # list what is waiting
+andro-agent approvals approve <id> <token>
+andro-agent approvals deny    <id> <token>
+```
+
+The waiting tool call hands the `<id>` and `<token>` to the model, which relays
+them to you. Deciding requires **both** the MCP bearer token and the single-use
+approval token, so neither a leaked activity feed nor the model itself can
+authorise a call.
+
+**A request that is never answered is DENIED.** An unattended server must not
+execute a destructive call just because nobody was watching. Tune the window
+with `APPROVAL_TIMEOUT_MS` (default 120s), or disable gating with
+`REQUIRE_APPROVAL=0` (only sensible in a disposable sandbox).
+
+---
 
 ### Bash confinement
 
@@ -215,6 +262,10 @@ curl -s http://127.0.0.1:8787/mcp \
 | `ALLOWED_HOSTS` | `127.0.0.1,localhost` (+ MagicDNS after `init`) | Host header allowlist |
 | `BASH_TIMEOUT_MS` | `30000` | Bash tool timeout |
 | `SANDBOX_MODE` | `auto` | `auto` confines Bash with bwrap; `off` disables confinement |
+| `REQUIRE_APPROVAL` | `1` | Require approval before Bash/Write/Edit (`0` disables) |
+| `APPROVAL_TIMEOUT_MS` | `120000` | How long an approval waits before being denied |
+| `ANDRO_BASE_URL` | `http://localhost:8083` | Local Andromedia core API for the context tools |
+| `ANDRO_SERVICE` | `local` | Default Andromedia service/workspace name |
 
 ### Tests
 
@@ -229,10 +280,18 @@ fail. They skip loudly if `bwrap` is unavailable on the host.
 
 ### Security notes
 
-Bash is the highest-risk tool because it executes arbitrary commands. Keep
-`SANDBOX_MODE=auto` unless the machine is disposable. The token is accepted only
-via the `Authorization: Bearer` header or `x-api-key` — **not** `?token=`,
-because query strings leak into proxy and access logs.
+Three independent layers, weakest link first:
+
+1. **Approval** — a human must approve every Bash/Write/Edit call. Defends
+   against a model doing something the user did not intend.
+2. **Sandbox** — approved commands run in bwrap and cannot reach anything
+   outside the workspace. Defends against the workspace not being the boundary.
+3. **Auth** — bearer token on every surface. The token is accepted only via the
+   `Authorization: Bearer` header or `x-api-key`, **not** `?token=`, because
+   query strings leak into proxy and access logs.
+
+None of these protect against a user approving a destructive command. Read what
+you approve.
 
 ### Speed defaults (built-in)
 

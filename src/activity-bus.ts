@@ -1,6 +1,6 @@
 import { randomUUID } from 'node:crypto'
 
-export type ActivityStatus = 'started' | 'progress' | 'ok' | 'error'
+export type ActivityStatus = 'started' | 'progress' | 'ok' | 'error' | 'awaiting-approval'
 
 export type ActivityEvent = {
   id: string
@@ -15,6 +15,13 @@ export type ActivityEvent = {
   output?: string
   outputType?: 'stdout' | 'stderr' | 'info'
   progress?: number
+  /** Present on approval lifecycle events, so a UI can render the prompt. */
+  approval?: {
+    status: 'pending' | 'approved' | 'denied' | 'expired'
+    summary: string
+    expiresAt?: number
+    by?: string
+  }
 }
 
 type Listener = (event: ActivityEvent) => void
@@ -125,6 +132,49 @@ class ActivityBus {
       progress: input.progress,
     })
   }
+
+  /** A destructive call is waiting for a human decision. */
+  emitApprovalRequested(input: {
+    id: string
+    tool: string
+    summary: string
+    paths?: string[]
+    args?: Record<string, unknown>
+    expiresAt: number
+  }): void {
+    this.push({
+      id: input.id,
+      ts: Date.now(),
+      tool: input.tool,
+      status: 'awaiting-approval',
+      argsSummary: input.summary,
+      paths: input.paths ?? [],
+      args: input.args,
+      approval: {
+        status: 'pending',
+        summary: input.summary,
+        expiresAt: input.expiresAt,
+      },
+    })
+  }
+
+  /** The decision landed (approved, denied, or timed out). */
+  emitApprovalDecided(input: {
+    id: string
+    tool: string
+    status: 'approved' | 'denied' | 'expired'
+    by: string
+  }): void {
+    this.push({
+      id: input.id,
+      ts: Date.now(),
+      tool: input.tool,
+      status: input.status === 'approved' ? 'started' : 'error',
+      argsSummary: `approval ${input.status}`,
+      paths: [],
+      approval: { status: input.status, summary: '', by: input.by },
+    })
+  }
 }
 
 export const activityBus = new ActivityBus()
@@ -137,9 +187,24 @@ export async function trackToolCall<T extends { isError?: boolean; content?: unk
     paths?: string[]
     args?: Record<string, unknown>
     onProgress?: (progress: { output: string; outputType?: 'stdout' | 'stderr' | 'info'; progress?: number }) => void
+    /**
+     * Consulted before the call starts. Returning a string aborts the call and
+     * surfaces that text to the model as an error — used for approval gating so
+     * the tool implementations stay unaware of the policy.
+     */
+    beforeRun?: () => Promise<string | null>
   },
   fn: (emitProgress: (progress: { output: string; outputType?: 'stdout' | 'stderr' | 'info'; progress?: number }) => void) => Promise<T>,
 ): Promise<T> {
+  if (meta.beforeRun) {
+    const blocked = await meta.beforeRun()
+    if (blocked) {
+      return {
+        isError: true,
+        content: [{ type: 'text', text: blocked }],
+      } as unknown as T
+    }
+  }
   const started = Date.now()
   const id = activityBus.emitStarted({
     tool,

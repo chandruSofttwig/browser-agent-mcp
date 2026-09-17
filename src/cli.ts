@@ -25,6 +25,9 @@ Usage:
   ${CLI} init              Create token + ~/.config/browser-agent-mcp/env
   ${CLI} start             Start MCP server on :8787 (foreground)
   ${CLI} status            Health check + config summary
+  ${CLI} approvals         List destructive tool calls awaiting approval
+  ${CLI} approvals approve <id> <token>
+  ${CLI} approvals deny <id> <token>
   ${CLI} funnel on         Publish /agent and /.well-known via Tailscale Funnel
   ${CLI} funnel off        Turn Funnel HTTPS off
   ${CLI} funnel status     Show Funnel status
@@ -245,8 +248,117 @@ function cmdFunnel(sub: string | undefined): number {
   }
 }
 
+/**
+ * `approvals` — list and decide pending destructive-tool requests.
+ *
+ * Runs against the local server over HTTP so it works whether the server is in
+ * the foreground, under systemd, or detached. The decision token is only ever
+ * shown here (never on the MCP surface), which is what stops the model from
+ * approving its own request.
+ */
+async function cmdApprovals(sub?: string, id?: string): Promise<void> {
+  const fileEnv = parseEnvFile(ENV_PATH)
+  const host = process.env.HOST || fileEnv.HOST || '127.0.0.1'
+  const port = process.env.PORT || fileEnv.PORT || '8787'
+  const token =
+    process.env.MCP_AUTH_TOKEN ||
+    fileEnv.MCP_AUTH_TOKEN ||
+    (existsSync(TOKEN_PATH) ? readFileSync(TOKEN_PATH, 'utf8').trim() : '')
+
+  if (!token) {
+    console.error('No MCP token found. Run: andro-agent init')
+    process.exitCode = 1
+    return
+  }
+
+  const base = `http://${host}:${port}/approvals`
+  const headers = { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' }
+
+  const fetchJson = async (url: string, init?: RequestInit) => {
+    const res = await fetch(url, { ...init, headers, signal: AbortSignal.timeout(5000) })
+    return { res, body: (await res.json().catch(() => ({}))) as Record<string, unknown> }
+  }
+
+  // List pending requests.
+  if (!sub || sub === 'list') {
+    try {
+      const { res, body } = await fetchJson(base)
+      if (!res.ok) {
+        console.error(`Server returned ${res.status}`)
+        process.exitCode = 1
+        return
+      }
+      if (body.enabled === false) {
+        console.log('Approvals are disabled (REQUIRE_APPROVAL=0).')
+        return
+      }
+      const pending = (body.pending ?? []) as Array<Record<string, unknown>>
+      if (pending.length === 0) {
+        console.log('No pending approvals.')
+        return
+      }
+      console.log(`${pending.length} pending approval(s):`)
+      for (const req of pending) {
+        console.log(`  id:      ${req.id}`)
+        console.log(`  tool:    ${req.tool}`)
+        console.log(`  what:    ${req.summary}`)
+        if (Array.isArray(req.paths) && req.paths.length) {
+          console.log(`  paths:   ${req.paths.join(', ')}`)
+        }
+        console.log(`  args:    ${JSON.stringify(req.args)}`)
+        console.log('')
+      }
+      console.log(`Approve with:  ${CLI} approvals approve <id> <token>`)
+      console.log(`Deny with:     ${CLI} approvals deny <id> <token>`)
+      console.log('')
+      console.log('The token is printed by the waiting tool call in the MCP client.')
+      return
+    } catch (error) {
+      console.error(
+        `Could not reach the local server (${base}). Is it running?  ${CLI} start`,
+      )
+      console.error(error instanceof Error ? error.message : String(error))
+      process.exitCode = 1
+      return
+    }
+  }
+
+  if (sub === 'approve' || sub === 'deny') {
+    const decisionToken = process.argv.slice(5)[0]
+    if (!id || !decisionToken) {
+      console.error(`Usage: ${CLI} approvals ${sub} <id> <token>`)
+      process.exitCode = 1
+      return
+    }
+    try {
+      const { res, body } = await fetchJson(`${base}/${encodeURIComponent(id)}`, {
+        method: 'POST',
+        body: JSON.stringify({
+          decision: sub === 'approve' ? 'approve' : 'deny',
+          token: decisionToken,
+        }),
+      })
+      if (!res.ok) {
+        console.error(`Failed (${res.status}): ${body.error ?? 'unknown error'}`)
+        process.exitCode = 1
+        return
+      }
+      console.log(`${sub === 'approve' ? 'Approved' : 'Denied'} ${id}`)
+      return
+    } catch (error) {
+      console.error(`Could not reach the local server (${base}).`)
+      console.error(error instanceof Error ? error.message : String(error))
+      process.exitCode = 1
+      return
+    }
+  }
+
+  console.error(`Usage: ${CLI} approvals [list | approve <id> <token> | deny <id> <token>]`)
+  process.exitCode = 1
+}
+
 async function main(): Promise<void> {
-  const [cmd, sub] = process.argv.slice(2)
+  const [cmd, sub, id] = process.argv.slice(2)
   switch (cmd) {
     case undefined:
     case 'help':
@@ -262,6 +374,9 @@ async function main(): Promise<void> {
       return
     case 'status':
       await cmdStatus()
+      return
+    case 'approvals':
+      await cmdApprovals(sub, id)
       return
     case 'funnel':
       process.exitCode = cmdFunnel(sub)

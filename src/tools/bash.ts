@@ -10,6 +10,7 @@ import {
   SandboxUnavailableError,
   sandboxStatus,
 } from '../sandbox.js'
+import { approvalGate } from '../tool-approval.js'
 
 function shellCommand(command: string): { exe: string; args: string[] } {
   if (process.platform === 'win32') {
@@ -51,6 +52,12 @@ export function registerBashTool(server: McpServer): void {
           argsSummary: command.length > 80 ? `${command.slice(0, 80)}…` : command,
           paths: cwd ? [cwd] : [],
           args: { command, cwd, timeout_ms },
+          beforeRun: approvalGate({
+            tool: 'Bash',
+            summary: command.length > 160 ? `${command.slice(0, 160)}…` : command,
+            paths: cwd ? [cwd] : [],
+            args: { command, cwd, timeout_ms },
+          }),
         },
         async (emitProgress) => {
           try {

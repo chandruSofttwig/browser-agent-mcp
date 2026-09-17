@@ -3,6 +3,7 @@ import { z } from 'zod/v4'
 import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js'
 import { trackToolCall } from '../activity-bus.js'
 import { resolveInWorkspace, toWorkspaceRelative } from '../paths.js'
+import { approvalGate } from '../tool-approval.js'
 
 export function registerEditTool(server: McpServer): void {
   server.registerTool(
@@ -40,6 +41,12 @@ export function registerEditTool(server: McpServer): void {
             argsSummary: path,
             paths: [path],
             args: activityArgs,
+            beforeRun: approvalGate({
+              tool: 'Edit',
+              summary: `Edit ${path} (${old_string.length}→${new_string.length} chars)`,
+              paths: [path],
+              args: activityArgs,
+            }),
           },
         async () => {
           try {
