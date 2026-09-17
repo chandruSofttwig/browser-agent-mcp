@@ -45,6 +45,34 @@ export function mountActivityRoutes(app: Express): void {
       res.json({ ok: true })
     })
 
+    // Local companion UI stream. The server is normally bound to loopback, so this
+    // route lets a separately running Andro UI consume activity without exposing
+    // the MCP bearer token to browser JavaScript.
+    app.get(`${prefix}/events-ui`, (req, res, next) => {
+      const origin = req.get('origin')
+      const localOrigin = !origin || /^https?:\/\/(localhost|127\.0\.0\.1)(:\d+)?$/.test(origin)
+      if (!localOrigin) {
+        res.status(403).json({ error: 'Local UI only' })
+        return
+      }
+      res.setHeader('Access-Control-Allow-Origin', origin || '*')
+      res.setHeader('Cache-Control', 'no-cache, no-transform')
+      next()
+    }, (req, res) => {
+      res.setHeader('Content-Type', 'text/event-stream')
+      res.setHeader('Connection', 'keep-alive')
+      res.flushHeaders?.()
+      const send = (event: unknown) => res.write(`data: ${JSON.stringify(event)}\n\n`)
+      for (const event of activityBus.snapshot()) send(event)
+      send({ type: 'ready', ts: Date.now() })
+      const unsubscribe = activityBus.subscribe(send)
+      const heartbeat = setInterval(() => res.write(`: ping ${Date.now()}\\n\\n`), 15000)
+      req.on('close', () => {
+        clearInterval(heartbeat)
+        unsubscribe()
+      })
+    })
+
     app.get(`${prefix}/events`, requireActivityAuth, (req, res) => {
       res.setHeader('Content-Type', 'text/event-stream')
       res.setHeader('Cache-Control', 'no-cache, no-transform')

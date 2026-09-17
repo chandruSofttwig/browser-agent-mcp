@@ -1,6 +1,6 @@
 import { randomUUID } from 'node:crypto'
 
-export type ActivityStatus = 'started' | 'ok' | 'error'
+export type ActivityStatus = 'started' | 'progress' | 'ok' | 'error'
 
 export type ActivityEvent = {
   id: string
@@ -12,6 +12,9 @@ export type ActivityEvent = {
   args?: Record<string, unknown>
   durationMs?: number
   error?: string
+  output?: string
+  outputType?: 'stdout' | 'stderr' | 'info'
+  progress?: number
 }
 
 type Listener = (event: ActivityEvent) => void
@@ -70,6 +73,30 @@ class ActivityBus {
     return id
   }
 
+  emitProgress(input: {
+    id: string
+    tool: string
+    argsSummary: string
+    paths?: string[]
+    args?: Record<string, unknown>
+    output: string
+    outputType?: 'stdout' | 'stderr' | 'info'
+    progress?: number
+  }): void {
+    this.push({
+      id: input.id,
+      ts: Date.now(),
+      tool: input.tool,
+      status: 'progress',
+      argsSummary: input.argsSummary,
+      paths: input.paths ?? [],
+      args: input.args,
+      output: input.output,
+      outputType: input.outputType,
+      progress: input.progress,
+    })
+  }
+
   emitFinished(input: {
     id: string
     tool: string
@@ -79,6 +106,9 @@ class ActivityBus {
     args?: Record<string, unknown>
     durationMs: number
     error?: string
+    output?: string
+    outputType?: 'stdout' | 'stderr' | 'info'
+    progress?: number
   }): void {
     this.push({
       id: input.id,
@@ -90,6 +120,9 @@ class ActivityBus {
       args: input.args,
       durationMs: input.durationMs,
       error: input.error,
+      output: input.output,
+      outputType: input.outputType,
+      progress: input.progress,
     })
   }
 }
@@ -103,8 +136,9 @@ export async function trackToolCall<T extends { isError?: boolean; content?: unk
     argsSummary: string
     paths?: string[]
     args?: Record<string, unknown>
+    onProgress?: (progress: { output: string; outputType?: 'stdout' | 'stderr' | 'info'; progress?: number }) => void
   },
-  fn: () => Promise<T>,
+  fn: (emitProgress: (progress: { output: string; outputType?: 'stdout' | 'stderr' | 'info'; progress?: number }) => void) => Promise<T>,
 ): Promise<T> {
   const started = Date.now()
   const id = activityBus.emitStarted({
@@ -113,8 +147,13 @@ export async function trackToolCall<T extends { isError?: boolean; content?: unk
     paths: meta.paths,
     args: meta.args,
   })
+  const emitProgress = (progress: { output: string; outputType?: 'stdout' | 'stderr' | 'info'; progress?: number }) => {
+    if (!progress.output) return
+    activityBus.emitProgress({ id, tool, argsSummary: meta.argsSummary, paths: meta.paths, args: meta.args, ...progress })
+    meta.onProgress?.(progress)
+  }
   try {
-    const result = await fn()
+    const result = await fn(emitProgress)
     const durationMs = Date.now() - started
     if (result.isError) {
       let errorText = 'Tool returned an error'

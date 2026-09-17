@@ -47,7 +47,7 @@ export function registerBashTool(server: McpServer): void {
           paths: cwd ? [cwd] : [],
           args: { command, cwd, timeout_ms },
         },
-        async () => {
+        async (emitProgress) => {
           try {
             const workdir = assertCwdInWorkspace(cwd)
             const timeout = Math.min(timeout_ms ?? config.bashTimeoutMs, 120_000)
@@ -80,10 +80,14 @@ export function registerBashTool(server: McpServer): void {
                 child.kill('SIGKILL')
               }, timeout)
               child.stdout.on('data', (chunk: Buffer) => {
-                if (stdout.length < STDOUT_CAP) stdout += chunk.toString('utf8')
+                const text = chunk.toString('utf8')
+                if (stdout.length < STDOUT_CAP) stdout += text.slice(0, Math.max(0, STDOUT_CAP - stdout.length))
+                emitProgress({ output: text, outputType: 'stdout' })
               })
               child.stderr.on('data', (chunk: Buffer) => {
-                if (stderr.length < STDERR_CAP) stderr += chunk.toString('utf8')
+                const text = chunk.toString('utf8')
+                if (stderr.length < STDERR_CAP) stderr += text.slice(0, Math.max(0, STDERR_CAP - stderr.length))
+                emitProgress({ output: text, outputType: 'stderr' })
               })
               child.on('close', (code) => {
                 clearTimeout(timer)

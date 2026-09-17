@@ -1,4 +1,5 @@
-import { mkdir, writeFile } from 'node:fs/promises'
+import { existsSync } from 'node:fs'
+import { mkdir, readFile, writeFile } from 'node:fs/promises'
 import { dirname } from 'node:path'
 import { z } from 'zod/v4'
 import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js'
@@ -23,16 +24,31 @@ export function registerWriteTool(server: McpServer): void {
       },
     },
     async ({ path, content }) =>
-      trackToolCall(
-        'Write',
-        {
-          argsSummary: `${path} (${content.length} bytes)`,
-          paths: [path],
-          args: { path, contentLength: content.length },
-        },
+      (() => {
+        const activityArgs: Record<string, unknown> = { path, contentLength: content.length }
+        return trackToolCall(
+          'Write',
+          {
+            argsSummary: `${path} (${content.length} bytes)`,
+            paths: [path],
+            args: activityArgs,
+          },
         async () => {
           try {
             const abs = resolveInWorkspace(path, { mustExist: false })
+            const existed = existsSync(abs)
+            const before = existed ? await readFile(abs, 'utf8') : ''
+            const beforeLines = before ? before.split(/\r?\n/) : []
+            const afterLines = content.split(/\r?\n/)
+            const common = Math.min(beforeLines.length, afterLines.length)
+            let additions = Math.max(0, afterLines.length - beforeLines.length)
+            let deletions = Math.max(0, beforeLines.length - afterLines.length)
+            for (let i = 0; i < common; i++) {
+              if (beforeLines[i] !== afterLines[i]) { additions++; deletions++ }
+            }
+            activityArgs.additions = additions
+            activityArgs.deletions = deletions
+            activityArgs.changeType = existed ? 'M' : 'A'
             await mkdir(dirname(abs), { recursive: true })
             await writeFile(abs, content, 'utf8')
             return {
@@ -55,6 +71,7 @@ export function registerWriteTool(server: McpServer): void {
             }
           }
         },
-      ),
-  )
+      )
+      })()
+    )
 }

@@ -27,18 +27,20 @@ export function registerEditTool(server: McpServer): void {
       },
     },
     async ({ path, old_string, new_string, replace_all }) =>
-      trackToolCall(
-        'Edit',
-        {
-          argsSummary: path,
-          paths: [path],
-          args: {
-            path,
-            old_string_len: old_string.length,
-            new_string_len: new_string.length,
-            replace_all: Boolean(replace_all),
+      (() => {
+        const activityArgs: Record<string, unknown> = {
+          path,
+          old_string_len: old_string.length,
+          new_string_len: new_string.length,
+          replace_all: Boolean(replace_all),
+        }
+        return trackToolCall(
+          'Edit',
+          {
+            argsSummary: path,
+            paths: [path],
+            args: activityArgs,
           },
-        },
         async () => {
           try {
             if (old_string === new_string) {
@@ -58,6 +60,20 @@ export function registerEditTool(server: McpServer): void {
             const after = replace_all
               ? before.split(old_string).join(new_string)
               : before.replace(old_string, new_string)
+            const beforeLines = before.split(/\r?\n/)
+            const afterLines = after.split(/\r?\n/)
+            const common = Math.min(beforeLines.length, afterLines.length)
+            let additions = Math.max(0, afterLines.length - beforeLines.length)
+            let deletions = Math.max(0, beforeLines.length - afterLines.length)
+            for (let i = 0; i < common; i++) {
+              if (beforeLines[i] !== afterLines[i]) {
+                additions++
+                deletions++
+              }
+            }
+            activityArgs.additions = additions
+            activityArgs.deletions = deletions
+            activityArgs.changeType = 'M'
             await writeFile(abs, after, 'utf8')
             return {
               content: [
@@ -79,6 +95,7 @@ export function registerEditTool(server: McpServer): void {
             }
           }
         },
-      ),
-  )
+      )
+      })()
+    )
 }
