@@ -1,10 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
-import {
-  type ActivityEvent,
-  apiBase,
-  fetchSnapshot,
-  getStoredToken,
-} from '@/lib/activity'
+import { type ActivityEvent, apiBase, fetchSnapshot } from '@/lib/activity'
 
 function isActivityEvent(data: unknown): data is ActivityEvent {
   return (
@@ -16,16 +11,23 @@ function isActivityEvent(data: unknown): data is ActivityEvent {
   )
 }
 
-export function useActivityStream(token: string | null) {
+/**
+ * Live activity feed.
+ *
+ * No token: this UI is served by the agent on loopback and the `-ui` routes are
+ * origin-authorised. Keeping the credential out of the URL is deliberate —
+ * query strings get written to access logs and browser history.
+ */
+export function useActivityStream() {
   const [events, setEvents] = useState<ActivityEvent[]>([])
   const [live, setLive] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const esRef = useRef<EventSource | null>(null)
   const backoffRef = useRef(1000)
+  const cancelledRef = useRef(false)
 
   const upsert = useCallback((incoming: ActivityEvent) => {
     setEvents((prev) => {
-      // Same id: replace started with ok/error (keep both chronological as separate? Plan says started then finished with same id - replace/update row)
       const idx = prev.findIndex((e) => e.id === incoming.id)
       if (idx >= 0) {
         const next = [...prev]
@@ -37,12 +39,11 @@ export function useActivityStream(token: string | null) {
   }, [])
 
   const connect = useCallback(() => {
-    if (!token) return
+    if (cancelledRef.current) return
     esRef.current?.close()
     setError(null)
 
-    const url = `${apiBase()}/events?token=${encodeURIComponent(token)}`
-    const es = new EventSource(url)
+    const es = new EventSource(`${apiBase()}/events-ui`)
     esRef.current = es
 
     es.onopen = () => {
@@ -64,7 +65,7 @@ export function useActivityStream(token: string | null) {
         }
         if (isActivityEvent(data)) upsert(data)
       } catch {
-        // ignore malformed
+        // ignore malformed frames
       }
     }
 
@@ -72,43 +73,35 @@ export function useActivityStream(token: string | null) {
       setLive(false)
       es.close()
       esRef.current = null
+      if (cancelledRef.current) return
       const delay = backoffRef.current
       backoffRef.current = Math.min(delay * 2, 15000)
-      window.setTimeout(() => {
-        if (getStoredToken() === token) connect()
-      }, delay)
+      window.setTimeout(() => connect(), delay)
     }
-  }, [token, upsert])
+  }, [upsert])
 
   useEffect(() => {
-    if (!token) {
-      setEvents([])
-      setLive(false)
-      return
-    }
+    cancelledRef.current = false
 
-    let cancelled = false
-    void fetchSnapshot(token)
+    void fetchSnapshot()
       .then((snap) => {
-        if (cancelled) return
-        // Newest first; keep latest status per id
+        if (cancelledRef.current) return
+        // Newest first, one row per id.
         const map = new Map<string, ActivityEvent>()
         for (const e of snap) map.set(e.id, e)
         setEvents([...map.values()].sort((a, b) => b.ts - a.ts))
       })
       .catch((err: Error) => {
-        if (!cancelled) setError(err.message)
+        if (!cancelledRef.current) setError(err.message)
       })
-      .finally(() => {
-        if (!cancelled) connect()
-      })
+      .finally(() => connect())
 
     return () => {
-      cancelled = true
+      cancelledRef.current = true
       esRef.current?.close()
       esRef.current = null
     }
-  }, [token, connect])
+  }, [connect])
 
   const clearLocal = useCallback(() => setEvents([]), [])
 

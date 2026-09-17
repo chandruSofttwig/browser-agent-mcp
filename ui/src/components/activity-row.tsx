@@ -7,13 +7,23 @@ import { cn } from '@/lib/utils'
 function statusVariant(status: ActivityEvent['status']) {
   if (status === 'ok') return 'ok' as const
   if (status === 'error') return 'error' as const
+  if (status === 'awaiting-approval') return 'warn' as const
   return 'running' as const
 }
 
 function statusLabel(status: ActivityEvent['status']) {
-  if (status === 'ok') return 'ok'
-  if (status === 'error') return 'error'
-  return 'running'
+  switch (status) {
+    case 'ok':
+      return 'ok'
+    case 'error':
+      return 'error'
+    case 'awaiting-approval':
+      return 'needs approval'
+    case 'progress':
+      return 'running'
+    default:
+      return 'running'
+  }
 }
 
 function formatTime(ts: number) {

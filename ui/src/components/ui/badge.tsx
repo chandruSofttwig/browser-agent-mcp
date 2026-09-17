@@ -11,6 +11,7 @@ const badgeVariants = cva(
         ok: 'bg-[var(--color-ok-bg)] text-[var(--color-ok)]',
         error: 'bg-[var(--color-err-bg)] text-[var(--color-err)]',
         running: 'bg-[var(--color-run-bg)] text-[var(--color-run)]',
+        warn: 'bg-amber-500/20 text-amber-700',
       },
     },
     defaultVariants: {

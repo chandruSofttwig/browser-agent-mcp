@@ -3,6 +3,7 @@ import { timingSafeEqual } from 'node:crypto'
 import { approvalQueue } from './approvals.js'
 import { extractBearerToken } from './auth.js'
 import { config } from './config.js'
+import { localOriginOnly } from './local-origin.js'
 
 /**
  * Approval endpoints.
@@ -45,6 +46,42 @@ export function mountApprovalRoutes(app: Express): void {
     /** Pending requests (never includes the decision token). */
     app.get(prefix, requireAuth, (_req, res) => {
       res.json({ enabled: approvalQueue.isEnabled, pending: approvalQueue.list() })
+    })
+
+    /**
+     * Local-origin variants for the bundled activity UI.
+     *
+     * Listing pending work is safe without a bearer token: the response never
+     * contains the decision token, and the route is loopback-only. Deciding
+     * still requires that token, so a local page cannot approve by itself —
+     * and the model, which does see the token, cannot approve either without
+     * the user relaying it into the UI.
+     */
+    app.get(`${prefix}-ui/pending`, localOriginOnly, (_req, res) => {
+      res.json({ enabled: approvalQueue.isEnabled, pending: approvalQueue.list() })
+    })
+
+    app.post(`${prefix}-ui/:id`, localOriginOnly, (req, res) => {
+      const body = (req.body ?? {}) as { decision?: string; token?: string }
+      if (body.decision !== 'approve' && body.decision !== 'deny') {
+        res.status(400).json({ error: "decision must be 'approve' or 'deny'" })
+        return
+      }
+      if (typeof body.token !== 'string' || !body.token.trim()) {
+        res.status(400).json({ error: 'token is required' })
+        return
+      }
+      const id = paramId(req.params.id)
+      if (!id) {
+        res.status(400).json({ error: 'id is required' })
+        return
+      }
+      const status = approvalQueue.decide(id, body.decision, body.token.trim(), 'ui')
+      if (!status) {
+        res.status(409).json({ error: 'No pending request for that id and token' })
+        return
+      }
+      res.json({ id, status })
     })
 
     app.get(`${prefix}/:id`, requireAuth, (req, res) => {
