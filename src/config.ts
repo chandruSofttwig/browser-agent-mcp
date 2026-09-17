@@ -96,6 +96,17 @@ export const config = {
   },
   allowedHosts: loadAllowedHosts(),
   bashTimeoutMs: Number.parseInt(env('BASH_TIMEOUT_MS', '30000')!, 10),
+  /**
+   * Filesystem confinement for the Bash tool.
+   *  - `auto` (default): confine with bwrap when it is installed and working,
+   *    and refuse to run Bash otherwise.
+   *  - `off`: run Bash with no confinement. Only appropriate where the whole
+   *    machine is already the trust boundary (a dedicated VM), since this
+   *    exposes anything the user account can read.
+   */
+  sandboxMode: (env('SANDBOX_MODE', 'auto')!.toLowerCase() === 'off' ? 'off' : 'auto') as
+    | 'auto'
+    | 'off',
   /** Public HTTPS origin+path for OAuth AS endpoints (must be under Funnel /agent). */
   publicBaseUrl: env('PUBLIC_BASE_URL', defaultPublicBase)!,
   /** Public MCP resource URL ChatGPT/Claude connect to. */

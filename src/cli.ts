@@ -145,6 +145,23 @@ async function cmdStatus(): Promise<void> {
   console.log(`  public MCP:  ${publicMcp}`)
   console.log(`  public base: ${publicBase}`)
 
+  // Surface Bash confinement: it is the difference between "can touch only the
+  // workspace" and "can touch anything this user can", so it belongs in status.
+  try {
+    const { sandboxStatus, resetSandboxStatusCache } = await import('./sandbox.js')
+    resetSandboxStatusCache()
+    const sandbox = sandboxStatus()
+    if (sandbox.active) {
+      console.log(`  bash:        sandboxed (${sandbox.backend})`)
+    } else {
+      const detail = sandbox.detail ? `: ${sandbox.detail}` : ''
+      console.log(`  bash:        NOT SANDBOXED (${sandbox.reason}${detail})`)
+      console.log('               install bubblewrap, or set SANDBOX_MODE=off to accept this')
+    }
+  } catch {
+    console.log('  bash:        sandbox status unavailable')
+  }
+
   const healthUrl = `http://${host}:${port}/healthz`
   try {
     const res = await fetch(healthUrl, { signal: AbortSignal.timeout(2000) })

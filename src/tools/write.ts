@@ -35,7 +35,9 @@ export function registerWriteTool(server: McpServer): void {
           },
         async () => {
           try {
-            const abs = resolveInWorkspace(path, { mustExist: false })
+            // createParents lets a new nested path resolve: containment is
+            // validated while building the chain, so this cannot escape.
+            const abs = resolveInWorkspace(path, { mustExist: false, createParents: true })
             const existed = existsSync(abs)
             const before = existed ? await readFile(abs, 'utf8') : ''
             const beforeLines = before ? before.split(/\r?\n/) : []

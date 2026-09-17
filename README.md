@@ -74,9 +74,41 @@ The CLI also loads that env file itself on `start`.
 | `Edit` | Exact string replace in a file |
 | `Glob` | Find files by glob pattern |
 | `Grep` | Search contents with ripgrep |
-| `Bash` | Run a shell command jailed to the workspace |
+| `Bash` | Run a shell command confined to the workspace |
 
 Default workspace root: `~/Documents/GitHub` (`WORKSPACE_ROOT`).
+
+### Bash confinement
+
+`Bash` runs arbitrary shell strings, so validating the working directory alone
+is **not** a jail — `cat /etc/passwd` does not care about `cwd`. Commands are
+therefore wrapped in [`bwrap`](https://github.com/containers/bubblewrap):
+
+| Inside the sandbox | Outside the sandbox |
+|---|---|
+| The workspace (read/write) | Everything else is unreachable |
+| System paths `/usr`, `/bin`, `/lib`, `/etc` (read-only) | `$HOME` dotfiles, `~/.ssh`, other repos |
+| A private `/tmp` | The MCP token file |
+| `HOME` redirected to `<workspace>/.sandbox-home` | |
+
+Networking is **not** isolated, so `npm install`, `git fetch` and test suites
+that reach the network keep working. `node`, `git`, `npm` and friends are on
+`PATH` regardless of how the server was started.
+
+If `bwrap` is missing or cannot create user namespaces (some hardened hosts and
+containers), `Bash` **refuses to run** rather than silently executing
+unconfined. Install it with `apt install bubblewrap`, or set `SANDBOX_MODE=off`
+to accept that `Bash` can read and write anything your user account can.
+
+Check what's active at any time:
+
+```bash
+andro-agent status
+```
+
+> **Note:** `SANDBOX_MODE=off` is only reasonable when the whole machine is
+> already the trust boundary (a throwaway VM). With it on, anyone holding the
+> Funnel URL and token can run commands as you.
 
 ---
 
@@ -182,6 +214,25 @@ curl -s http://127.0.0.1:8787/mcp \
 | `PUBLIC_MCP_URL` | `…/mcp` | MCP resource URL |
 | `ALLOWED_HOSTS` | `127.0.0.1,localhost` (+ MagicDNS after `init`) | Host header allowlist |
 | `BASH_TIMEOUT_MS` | `30000` | Bash tool timeout |
+| `SANDBOX_MODE` | `auto` | `auto` confines Bash with bwrap; `off` disables confinement |
+
+### Tests
+
+```bash
+npm test        # node:test via tsx — sandbox escapes, path jail, auth
+npm run typecheck
+```
+
+The sandbox tests execute real `bwrap` calls and assert that reading/writing
+outside the workspace, reaching `$HOME`, and touching sibling directories all
+fail. They skip loudly if `bwrap` is unavailable on the host.
+
+### Security notes
+
+Bash is the highest-risk tool because it executes arbitrary commands. Keep
+`SANDBOX_MODE=auto` unless the machine is disposable. The token is accepted only
+via the `Authorization: Bearer` header or `x-api-key` — **not** `?token=`,
+because query strings leak into proxy and access logs.
 
 ### Speed defaults (built-in)
 

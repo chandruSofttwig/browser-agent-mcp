@@ -1,7 +1,15 @@
-import { accessSync, constants, realpathSync } from 'node:fs'
+import { accessSync, constants, existsSync, mkdirSync, realpathSync } from 'node:fs'
 import { homedir } from 'node:os'
 import { isAbsolute, join, normalize, relative, resolve, sep } from 'node:path'
 import { config } from './config.js'
+
+function existsSyncSafe(path: string): boolean {
+  try {
+    return existsSync(path)
+  } catch {
+    return false
+  }
+}
 
 function expandHome(input: string): string {
   if (input === '~') return homedir()
@@ -34,13 +42,46 @@ export function getWorkspaceRoot(): string {
 /**
  * Resolve a user-supplied path strictly under the workspace root.
  * Rejects escapes via .., symlinks outside root, or absolute paths outside root.
+ *
+ * @param options.mustExist  when true the leaf must already exist.
+ * @param options.createParents
+ *   when true, missing parent directories are created (inside the workspace)
+ *   before resolving. This exists because resolving a not-yet-existing path
+ *   needs a real parent to validate against, so callers that write new nested
+ *   files cannot simply resolve first. Containment is still enforced: the
+ *   directory is created through the same resolver, so an escaping parent is
+ *   rejected before anything touches the filesystem.
  */
-export function resolveInWorkspace(userPath: string, options?: { mustExist?: boolean }): string {
+export function resolveInWorkspace(
+  userPath: string,
+  options?: { mustExist?: boolean; createParents?: boolean },
+): string {
   const root = getWorkspaceRoot()
   const expanded = expandHome(userPath.trim() || '.')
   const candidate = isAbsolute(expanded)
     ? normalize(expanded)
     : normalize(join(root, expanded))
+
+  // Build the missing parent chain one level at a time, validating containment
+  // at each step so a symlinked or traversing ancestor cannot be created.
+  if (options?.createParents && options?.mustExist === false) {
+    const missing: string[] = []
+    let cursor = candidate
+    while (!existsSyncSafe(cursor) && cursor !== root) {
+      const parent = resolve(cursor, '..')
+      if (parent === cursor) break
+      missing.push(cursor)
+      cursor = parent
+      if (missing.length > 64) break // pathological input guard
+    }
+    for (const dir of missing.reverse()) {
+      const rel = relative(root, dir)
+      if (rel.startsWith('..') || isAbsolute(rel)) {
+        throw new Error(`Path escapes workspace root (${root}): ${userPath}`)
+      }
+      mkdirSync(dir, { recursive: true })
+    }
+  }
 
   const realCandidate = options?.mustExist === false
     ? (() => {

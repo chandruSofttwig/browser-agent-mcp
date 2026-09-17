@@ -5,6 +5,11 @@ import { trackToolCall } from '../activity-bus.js'
 import { config } from '../config.js'
 import { STDERR_CAP, STDOUT_CAP, truncateOutput } from '../limits.js'
 import { assertCwdInWorkspace, getWorkspaceRoot, toWorkspaceRelative } from '../paths.js'
+import {
+  buildSandboxedCommand,
+  SandboxUnavailableError,
+  sandboxStatus,
+} from '../sandbox.js'
 
 function shellCommand(command: string): { exe: string; args: string[] } {
   if (process.platform === 'win32') {
@@ -18,7 +23,7 @@ export function registerBashTool(server: McpServer): void {
     'Bash',
     {
       description:
-        'Run a shell command jailed under the workspace. Prefer Glob/Grep/Read/Edit for file work — Bash is slower and heavier. Output and timeout are capped.',
+        'Run a shell command confined to the workspace. The command cannot read or write outside it. Prefer Glob/Grep/Read/Edit for file work — Bash is slower and heavier. Output and timeout are capped.',
       annotations: {
         readOnlyHint: false,
         openWorldHint: false,
@@ -51,7 +56,24 @@ export function registerBashTool(server: McpServer): void {
           try {
             const workdir = assertCwdInWorkspace(cwd)
             const timeout = Math.min(timeout_ms ?? config.bashTimeoutMs, 120_000)
-            const { exe, args } = shellCommand(command)
+
+            // Confine the command itself, not just its working directory. cwd
+            // validation alone is not a jail — `cat /etc/passwd` ignores cwd.
+            const status = sandboxStatus()
+            let exe: string
+            let args: string[]
+            let extraEnv: Record<string, string> = {}
+            if (status.active) {
+              const sandboxed = buildSandboxedCommand(command, getWorkspaceRoot())
+              exe = sandboxed.exe
+              args = sandboxed.args
+              extraEnv = sandboxed.env
+            } else {
+              const unsandboxed = shellCommand(command)
+              exe = unsandboxed.exe
+              args = unsandboxed.args
+            }
+
             const result = await new Promise<{
               code: number | null
               stdout: string
@@ -68,6 +90,7 @@ export function registerBashTool(server: McpServer): void {
                   LANG: process.env.LANG ?? 'C.UTF-8',
                   TERM: 'dumb',
                   BROWSER_AGENT_MCP_WORKSPACE: getWorkspaceRoot(),
+                  ...extraEnv,
                 },
                 stdio: ['ignore', 'pipe', 'pipe'],
                 windowsHide: true,
@@ -102,6 +125,7 @@ export function registerBashTool(server: McpServer): void {
             const parts = [
               `cwd: ${toWorkspaceRelative(workdir)}`,
               `exit: ${result.timedOut ? 'timeout' : result.code}`,
+              `sandbox: ${status.active ? 'bwrap (workspace-confined)' : `OFF (${status.reason})`}`,
             ]
             if (result.stdout) {
               parts.push(`stdout:\n${truncateOutput(result.stdout, STDOUT_CAP, 'stdout')}`)
@@ -118,14 +142,13 @@ export function registerBashTool(server: McpServer): void {
               content: [{ type: 'text' as const, text: parts.join('\n\n') }],
             }
           } catch (error) {
+            const message =
+              error instanceof SandboxUnavailableError
+                ? error.message
+                : `Bash failed: ${error instanceof Error ? error.message : String(error)}`
             return {
               isError: true,
-              content: [
-                {
-                  type: 'text' as const,
-                  text: `Bash failed: ${error instanceof Error ? error.message : String(error)}`,
-                },
-              ],
+              content: [{ type: 'text' as const, text: message }],
             }
           }
         },

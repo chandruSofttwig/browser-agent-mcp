@@ -16,9 +16,10 @@ export function extractBearerToken(req: Request): string | null {
     if (match?.[1]) return match[1].trim()
   }
 
-  // Some MCP clients send token via query during OAuth-less setup
-  const q = req.query.token
-  if (typeof q === 'string' && q.trim()) return q.trim()
+  // NOTE: the token is deliberately NOT accepted from ?token=. Query strings
+  // are recorded by proxies, access logs, browser history and Referer headers,
+  // so a credential passed that way leaks out of the trust boundary. MCP
+  // clients that cannot set headers should use the OAuth flow instead.
 
   const alt = req.headers['x-api-key']
   if (typeof alt === 'string' && alt.trim()) return alt.trim()
