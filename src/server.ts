@@ -19,6 +19,7 @@ import { registerAllTools } from './tools/index.js'
 import { FileBackedAuthProvider } from './oauth-provider.js'
 import { mountActivityRoutes } from './activity-routes.js'
 import { mountApprovalRoutes } from './approval-routes.js'
+import { mountFileRoutes } from './file-routes.js'
 
 const LOG = '[andro-agent]'
 
@@ -180,6 +181,7 @@ export function startServer(): void {
 
   mountActivityRoutes(app)
   mountApprovalRoutes(app)
+  mountFileRoutes(app)
 
   app.use('/mcp', authMiddleware)
   app.use('/agent/mcp', authMiddleware)

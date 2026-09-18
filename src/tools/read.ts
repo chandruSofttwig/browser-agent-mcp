@@ -1,9 +1,8 @@
-import { readFile } from 'node:fs/promises'
 import { z } from 'zod/v4'
 import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js'
 import { trackToolCall } from '../activity-bus.js'
 import { READ_DEFAULT_LIMIT, READ_HARD_MAX } from '../limits.js'
-import { resolveInWorkspace, toWorkspaceRelative } from '../paths.js'
+import { readFileWindow } from '../ops/files.js'
 
 export function registerReadTool(server: McpServer): void {
   server.registerTool(
@@ -43,26 +42,22 @@ export function registerReadTool(server: McpServer): void {
         },
         async () => {
           try {
-            const abs = resolveInWorkspace(path, { mustExist: true })
-            const raw = await readFile(abs, 'utf8')
-            const lines = raw.split('\n')
-            const start = offset ? Math.max(0, offset - 1) : 0
-            const window = Math.min(limit ?? READ_DEFAULT_LIMIT, READ_HARD_MAX)
-            const end = Math.min(start + window, lines.length)
-            const slice = lines.slice(start, end)
-            const numbered = slice
-              .map((line, i) => `${String(start + i + 1).padStart(6)}\t${line}`)
+            // Shared with the local HTTP route (see ops/files.ts) so the
+            // workspace confinement cannot hold in one and not the other.
+            const window = await readFileWindow({ path, offset, limit })
+            const numbered = window.content
+              .split('\n')
+              .map((line, i) => `${String(window.startLine + i).padStart(6)}\t${line}`)
               .join('\n')
-            const truncated = end < lines.length
             return {
               content: [
                 {
                   type: 'text' as const,
                   text:
-                    `File: ${toWorkspaceRelative(abs)} (lines ${start + 1}-${end} of ${lines.length})\n\n` +
+                    `File: ${window.path} (lines ${window.startLine}-${window.endLine} of ${window.totalLines})\n\n` +
                     numbered +
-                    (truncated
-                      ? `\n\n…truncated — pass offset=${end + 1} and limit to continue`
+                    (window.truncated
+                      ? `\n\n…truncated — pass offset=${window.endLine + 1} and limit to continue`
                       : ''),
                 },
               ],
